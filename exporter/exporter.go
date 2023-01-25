@@ -60,6 +60,9 @@ var (
 		"local_ts",
 		"remote_ts",
 	}
+	tunnelLbls = []string{
+		"local_host",
+	}
 )
 var (
 	ikeSAStates   = make(map[string]float64)
@@ -100,6 +103,7 @@ type Exporter struct {
 	childSABytesOut   *prometheus.Desc
 	childSAPacketsOut *prometheus.Desc
 	childSAInstalled  *prometheus.Desc
+	tunnelUp          *prometheus.Desc
 }
 
 // Describe describes all the metrics exported by the IPsec exporter. It
@@ -124,6 +128,7 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	ch <- e.childSABytesOut
 	ch <- e.childSAPacketsOut
 	ch <- e.childSAInstalled
+	ch <- e.tunnelUp
 }
 
 // Collect fetches the statistics from strongswan/libreswan, and
@@ -160,6 +165,10 @@ func (e *Exporter) scrapeIpsec() (m metrics, ok bool) {
 }
 
 func (e *Exporter) collect(m metrics, ch chan<- prometheus.Metric) {
+
+	localIp := ""
+	childSwanState := 0
+
 	if m.Stats.Uptime.Since != "" {
 		uptime, err := time.ParseInLocation("Jan _2 15:04:05 2006", m.Stats.Uptime.Since, tz)
 		if err != nil {
@@ -199,6 +208,8 @@ func (e *Exporter) collect(m metrics, ch chan<- prometheus.Metric) {
 			ikeSA.RemoteXAuthID + ikeSA.RemoteEAPID,
 			strings.Join(append(ikeSA.LocalVIPs, ikeSA.RemoteVIPs...), ", "),
 		}
+		localIp = ikeSA.LocalHost
+
 		state := math.NaN()
 		if f, ok := ikeSAStates[ikeSA.State]; ok {
 			state = f
@@ -229,6 +240,9 @@ func (e *Exporter) collect(m metrics, ch chan<- prometheus.Metric) {
 			}
 			if !math.IsNaN(state) {
 				ch <- prometheus.MustNewConstMetric(e.childSAState, prometheus.GaugeValue, state, childLabelValues...)
+				if state == 3 {
+					childSwanState = 1
+				}
 			}
 			ch <- prometheus.MustNewConstMetric(e.childSABytesIn, prometheus.GaugeValue, float64(childSA.InBytes), childLabelValues...)
 			if childSA.InPackets != nil {
@@ -244,6 +258,8 @@ func (e *Exporter) collect(m metrics, ch chan<- prometheus.Metric) {
 		}
 	}
 	ch <- prometheus.MustNewConstMetric(e.up, prometheus.GaugeValue, 1)
+
+	ch <- prometheus.MustNewConstMetric(e.tunnelUp, prometheus.GaugeValue, float64(childSwanState), localIp)
 }
 
 // New returns an initialized exporter.
@@ -366,6 +382,12 @@ func New(collectorType int, address *url.URL, timeout time.Duration, ipsecCmd []
 			prometheus.BuildFQName(namespace, "", "child_sa_installed_seconds"),
 			"Number of seconds since the child SA has been installed.",
 			childSALbls,
+			nil,
+		),
+		tunnelUp: prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "", "tunnel_up"),
+			"Tunnel up ?",
+			tunnelLbls,
 			nil,
 		),
 	}
