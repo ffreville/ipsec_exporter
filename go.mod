@@ -1,4 +1,4 @@
-module github.com/sergeymakinen/ipsec_exporter
+module github.com/ffreville/ipsec_exporter
 
 go 1.14
 
